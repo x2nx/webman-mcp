@@ -1,0 +1,22 @@
+{
+  "name": "x2nx/webman-mcp",
+  "type": "library",
+  "license": "MIT",
+  "homepage": "https://github.com/x2nx/webman-mcp",
+  "description": "webman-mcp service based on Mcp/sdk",
+  "authors": [
+    {
+      "name": "OK Xaas",
+      "email": "okxaas@gmail.com"
+    }
+  ],
+  "minimum-stability": "dev",
+  "require": {
+    "mcp/sdk": "dev-main"
+  },
+  "autoload": {
+    "psr-4": {
+      "X2nx\\WebmanMcp\\": "src"
+    }
+  }
+}
