@@ -1,15 +1,21 @@
 <?php
+
+use X2nx\WebmanMcp\Process\Server;
+use Workerman\Events\Fiber;
+use Workerman\Protocols\Http\Request;
+use support\Log;
+
 return [
-    'server' => [
-        'handler' => X2nx\WebmanMcp\Process\Server::class,
+    'mcp-server' => [
+        'handler' => Server::class,
         'listen' => 'http://0.0.0.0:7190',
         'count' => cpu_count(),
         'reloadable' => false,
         'reusePort' => true,
-        'eventLoop' => Workerman\Events\Fiber::class,
+        'eventLoop' => Fiber::class,
         'constructor' => [
-            'requestClass' => Workerman\Protocols\Http\Request::class,
-            'logger' => support\Log::channel('mcp'),
+            'requestClass'  => Request::class,
+            'logger'        => 'log.plugin.x2nx.webman-mcp.mcp',
         ]
     ]
 ];

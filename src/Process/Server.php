@@ -46,6 +46,10 @@ class Server
      */
     public function onWorkerStart(Worker $worker): void
     {
+        $configPrefix = 'plugin.x2nx.webman-mcp.%s';
+        $this->logger = Log::channel(
+            config(sprintf($configPrefix, 'process.mcp.constructor.logger')) ?? 'default'
+        );
         $this->worker = $worker;
         $this->initializeMcpServer();
     }
@@ -103,8 +107,8 @@ class Server
         if (!empty($response)) {
             $this->logger->info(sprintf('MCP Server response: %s', $response['body']));
             $connection->send(new Response(
-                $response['status'], 
-                $response['headers'], 
+                $response['status'],
+                $response['headers'],
                 $response['body']
             ));
         }
@@ -121,7 +125,7 @@ class Server
     {
         $this->logger->error(
             sprintf(
-                'MCP Server error: %s, code: %s', 
+                'MCP Server error: %s, code: %s',
                 $msg,
                 $code
             )
@@ -147,29 +151,28 @@ class Server
      */
     private function initializeMcpServer(): void
     {
-        $logName = 'plugin.x2nx.webman-mcp.%s';
-        $this->logger = config(
-            sprintf($logName, 'process.mcp.constructor.logger'),
-            Log::channel(sprintf($logName, 'log.mcp'))
+        $configPrefix = 'plugin.x2nx.webman-mcp.%s';
+        $logChannel = config(sprintf($configPrefix, 'process.mcp.constructor.logger')) ?? 'default';
+        $this->logger = Log::channel(
+            config(sprintf($configPrefix, 'process.mcp.constructor.logger')) ?? 'default'
         );
         $this->server = McpServer::builder()
             ->setServerInfo(
-                config(sprintf($logName, 'mcp.server.name')),
-                config(sprintf($logName, 'mcp.server.version')),
-                config(sprintf($logName, 'mcp.server.description')),
+                config(sprintf($configPrefix, 'mcp.server.name')),
+                config(sprintf($configPrefix, 'mcp.server.version')),
+                config(sprintf($configPrefix, 'mcp.server.description')),
             )->setDiscovery(
-
-                config(sprintf($logName, 'mcp.server.discover.base_path'), base_path()),
-                config(sprintf($logName, 'mcp.server.discover.scan_dirs'), [
+                config(sprintf($configPrefix, 'mcp.server.discover.base_path'), base_path()),
+                config(sprintf($configPrefix, 'mcp.server.discover.scan_dirs'), [
                     'app/mcp',
                 ]),
-                config(sprintf($logName, 'mcp.server.discover.exclude_dirs'), []),
+                config(sprintf($configPrefix, 'mcp.server.discover.exclude_dirs'), []),
             )
             ->setLogger($this->logger)->build();
     }
 
     /**
-     * 启动 Http 传输   
+     * 启动 Http 传输
      */
     public function httpServer($connection, $request): void {
         $this->transport = new SseHttpTransport(
