@@ -1,9 +1,6 @@
 <?php
 namespace X2nx\WebmanMcp\Process;
 
-use Psr\Log\NullLogger;
-use X2nx\WebmanMcp\Transport\SseHttpTransport;
-
 use Workerman\Worker;
 use Workerman\Protocols\Http\Request;
 use Workerman\Connection\TcpConnection;
@@ -12,6 +9,7 @@ use Mcp\Server as McpServer;
 use Mcp\Server\Transport\TransportInterface;
 use Mcp\Server\Transport\StdioTransport;
 use Mcp\Server\Transport\StreamableHttpTransport;
+use X2nx\WebmanMcp\Transport\SseHttpTransport;
 
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Psr\Log\LoggerInterface;
