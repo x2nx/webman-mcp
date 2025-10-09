@@ -140,9 +140,6 @@ class Server
     public function onClose(TcpConnection $connection): void
     {
         $this->logger->info('MCP Server closed');
-        if (method_exists($this->transport, 'close')) {
-            $this->transport->close();
-        }
     }
 
     /**
