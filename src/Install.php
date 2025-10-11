@@ -9,7 +9,6 @@ class Install
      * @var array
      */
     protected static $pathRelation = array (
-        'mcp'                           => 'app/mcp',
         'config/plugin/x2nx/webman-mcp' => 'config/plugin/x2nx/webman-mcp',
         'mcp-stdio.php'                 => 'mcp-stdio.php'
     );
@@ -20,6 +19,9 @@ class Install
      */
     public static function install()
     {
+        if (!is_dir(app_path('mcp'))) {
+            mkdir(app_path('mcp'), 0755, true);
+        }
         static::installByRelation();
     }
 
