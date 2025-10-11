@@ -10,7 +10,6 @@ return [
         'count'     => 1,
         'constructor' => [
             'requestClass'  => Request::class,
-            'logger'        => 'log.plugin.x2nx.webman-mcp.mcp',
         ]
     ]
 ];

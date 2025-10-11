@@ -45,9 +45,7 @@ class Server
     public function onWorkerStart(Worker $worker): void
     {
         $configPrefix = 'plugin.x2nx.webman-mcp.%s';
-        $this->logger = Log::channel(
-            config(sprintf($configPrefix, 'process.mcp.constructor.logger')) ?? 'default'
-        );
+        $this->logger = Log::channel(sprintf($configPrefix, 'mcp'));
         $this->worker = $worker;
         $this->initializeMcpServer();
     }
@@ -147,10 +145,7 @@ class Server
     private function initializeMcpServer(): void
     {
         $configPrefix = 'plugin.x2nx.webman-mcp.%s';
-        $logChannel = config(sprintf($configPrefix, 'process.mcp.constructor.logger')) ?? 'default';
-        $this->logger = Log::channel(
-            config(sprintf($configPrefix, 'process.mcp.constructor.logger')) ?? 'default'
-        );
+        $this->logger = Log::channel(sprintf($configPrefix, 'mcp'));
         $this->server = McpServer::builder()
             ->setServerInfo(
                 config(sprintf($configPrefix, 'mcp.server.name')),
@@ -175,8 +170,7 @@ class Server
             request: $request,
             logger: $this->logger,
         );
-        $this->server->connect($this->transport);
-        $this->transport->listen();
+        $this->server->run($this->transport);
     }
 
     /**
@@ -226,9 +220,7 @@ class Server
                 streamFactory: $this->psr17Factory,
                 logger: $this->logger,
             );
-            $this->server->connect($this->transport);
-            $psrResponse = $this->transport->listen();
-
+            $psrResponse = $this->server->run($this->transport);
             // Convert PSR-7 Response to Webman Response
             $status = $psrResponse->getStatusCode();
             $headers = $psrResponse->getHeaders();
@@ -262,7 +254,6 @@ class Server
         $this->transport = new StdioTransport(
             logger: $this->logger,
         );
-        $this->server->connect($this->transport);
-        $this->transport->listen();
+        $this->server->run($this->transport);
     }
 }
