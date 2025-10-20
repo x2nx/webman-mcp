@@ -12,10 +12,10 @@
 namespace X2nx\WebmanMcp\Transport;
 
 use Mcp\Server\Transport\TransportInterface;
+use Psr\Http\Message\ServerRequestInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Symfony\Component\Uid\Uuid;
-use Workerman\Protocols\Http\Request;
 use Workerman\Connection\TcpConnection;
 use Workerman\Protocols\Http\ServerSentEvents;
 use support\Response;
@@ -59,10 +59,10 @@ class SseHttpTransport implements TransportInterface
 
     public function __construct(
         private readonly TcpConnection $connection,
-        private readonly Request $request,
+        private readonly ServerRequestInterface $request,
         private readonly LoggerInterface $logger = new NullLogger(),
     ) {
-        $sessionIdString = $this->request->header('mcp-session-id');
+        $sessionIdString = $this->request->getHeaderLine('mcp-session-id');
         $this->sessionId = $sessionIdString ? Uuid::fromString($sessionIdString) : null;
     }
 
@@ -85,7 +85,7 @@ class SseHttpTransport implements TransportInterface
 
     public function listen(): mixed
     {
-        return match ($this->request->method()) {
+        return match ($this->request->getMethod()) {
             'OPTIONS' => $this->handleOptionsRequest(),
             'GET' => $this->handleGetRequest(),
             'POST' => $this->handlePostRequest(),
@@ -111,7 +111,7 @@ class SseHttpTransport implements TransportInterface
 
     protected function handlePostRequest()
     {
-        $this->activeSessionId = $this->request->get('sessionId');
+        $this->activeSessionId = $this->request->getQueryParams()['sessionId'] ?? null;
 
         if (empty($this->activeSessionId)) {
             $this->sendJsonResponse(400, $this->corsHeaders + $this->jsonHeaders, [
@@ -122,7 +122,7 @@ class SseHttpTransport implements TransportInterface
         }
         
         $this->sessionId = self::$ACTIVE_SESSIONS[$this->activeSessionId] ?? null;
-        $body = $this->request->rawBody();
+        $body = (string)$this->request->getBody()->getContents();
         if (empty($body)) {
             $this->logger->warning('Client sent empty request body.');
             $this->sendJsonResponse(400, [], [
