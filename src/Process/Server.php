@@ -62,7 +62,7 @@ class Server
             
             // create global shared session store (based on webman Cache)
             $sessionTtl = (int) config(sprintf(self::CONFIG_PREFIX, 'mcp.session.ttl'), 3600);
-            $sessionStoreName = (string) config(sprintf(self::CONFIG_PREFIX, 'mcp.session.store'), 'mcp_sessions');
+            $sessionStoreName = (string) config(sprintf(self::CONFIG_PREFIX, 'mcp.session.store'), '');
             
             try {
                 $this->globalSessionStore = WebmanCache::forSessions($sessionStoreName, $sessionTtl);
