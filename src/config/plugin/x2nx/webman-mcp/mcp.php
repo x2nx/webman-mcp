@@ -1,7 +1,7 @@
 <?php
 
 return [
-    // 服务器配置
+    // server configuration
     'server' => [
         'name' => 'MCP Server',
         'version' => '1.0.0',
@@ -9,7 +9,7 @@ return [
         'discover' => [
             'base_path' => base_path(),
             'scan_dirs' => [
-                'app/mcp',           // 备用扫描目录（大写）
+                'app/mcp',
             ],
             'exclude_dirs' => [
                 'vendor',
@@ -20,6 +20,40 @@ return [
                 'config',
                 'support',
             ],
+            'cache' => [
+                // enable discovery cache
+                'enable' => false,
+                // cache expiration time (seconds), default 1 hour
+                'ttl' => 3600,
+                // cache store name, leave empty to use default cache
+                'store' => '',
+            ],
         ],
-    ],
+        'transport' => [
+            'sse' => [
+                // enable sse transport
+                'enable' => true,
+                // sse transport route
+                'route' => [
+                    '/sse', 
+                    '/message'
+                ],
+            ],
+            'stream' => [
+                // enable stream transport
+                'enable' => true,
+                // stream transport route
+                'route' => [
+                    '/mcp',
+                ],
+            ],
+        ],
+        // session cache configuration (based on webman cache)
+        'session' => [
+            // session expiration time (seconds), default 1 hour
+            'ttl' => 3600,
+            // cache store name, leave empty to use default cache
+            'store' => '',
+        ]
+    ]
 ];

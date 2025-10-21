@@ -1,7 +1,9 @@
 <?php
-namespace x2nx\WebmanMcp\Process;
+namespace X2nx\WebmanMcp\Process;
 
+use Webman\Channel\Client;
 use Workerman\Worker;
+use Workerman\Protocols\Http\ServerSentEvents;
 use Workerman\Protocols\Http\Request;
 use Workerman\Connection\TcpConnection;
 use Mcp\Server as McpServer;
@@ -23,55 +25,77 @@ class Server
      * @var Worker
      */
     protected Worker $worker;
-    
     /**
      * @var LoggerInterface
      */
     protected LoggerInterface $logger;
-
     /**
      * @var Psr17Factory
      */
     protected Psr17Factory $psr17Factory;
-
     /**
-     * 全局共享的Session Store
-     * 确保所有Server实例共享同一个session store
+     * global shared session store
+     * ensure all Server instances share the same session store
      */
     protected $globalSessionStore;
-
     /**
-     * 配置前缀
+     * mcp sse connects
+     */
+    protected static array $mcpSseConnects = [];
+    /**
+     * config prefix
      */
     private const CONFIG_PREFIX = 'plugin.x2nx.webman-mcp.%s';
-
     /**
-     * Worker 启动
+     * Worker started
+     * 
+     * @param Worker $worker
+     * @return void
      */
     public function onWorkerStart(Worker $worker): void
     {
-        $this->logger = Log::channel(sprintf(self::CONFIG_PREFIX, 'mcp'));
-        $this->worker = $worker;
-        $this->psr17Factory = new Psr17Factory();
-        // 创建全局共享的Session Store（基于 webman Cache）
-        $sessionTtl = (int) config(sprintf(self::CONFIG_PREFIX, 'mcp.session.ttl'), 3600);
-        $sessionStoreName = (string) config(sprintf(self::CONFIG_PREFIX, 'mcp.session.store'), '');
+        $this->startChannelClient($worker);
         try {
-            $this->globalSessionStore = new WebmanCache($sessionStoreName, $sessionTtl);
-            $this->logger->info('Using Webman CacheSessionStore for MCP sessions', [
-                'store' => $sessionStoreName ?: '(default)',
-                'ttl' => $sessionTtl
+            $this->logger = Log::channel(sprintf(self::CONFIG_PREFIX, 'mcp'));
+            $this->worker = $worker;
+            $this->psr17Factory = new Psr17Factory();
+            
+            // create global shared session store (based on webman Cache)
+            $sessionTtl = (int) config(sprintf(self::CONFIG_PREFIX, 'mcp.session.ttl'), 3600);
+            $sessionStoreName = (string) config(sprintf(self::CONFIG_PREFIX, 'mcp.session.store'), 'mcp_sessions');
+            
+            try {
+                $this->globalSessionStore = WebmanCache::forSessions($sessionStoreName, $sessionTtl);
+                $this->logger->info('Using Webman CacheSessionStore for MCP sessions', [
+                    'store' => $sessionStoreName ?: '(default)',
+                    'ttl' => $sessionTtl
+                ]);
+            } catch (\Throwable $e) {
+                $this->logger->warning('Failed to init CacheSessionStore, fallback to FileSessionStore', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                $this->globalSessionStore = new FileSessionStore(runtime_path('sessions'));
+            }
+            
+            $this->logger->info('MCP Process Worker started successfully', [
+                'worker_id' => $worker->id,
+                'session_store' => get_class($this->globalSessionStore)
             ]);
+            
         } catch (\Throwable $e) {
-            $this->logger->warning('Failed to init CacheSessionStore, fallback to InMemorySessionStore', [
-                'error' => $e->getMessage()
+            $this->logger->error('Failed to start MCP Process Worker', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
-            $this->globalSessionStore = new FileSessionStore(runtime_path('sessions'));
+            throw $e;
         }
     }
 
     /**
-     * Worker 重新加载
+     * Worker reloaded
+     * 
+     * @return void
      */
     public function onWorkerReload(): void
     {
@@ -79,19 +103,25 @@ class Server
     }
 
     /**
-     * Worker 停止
+     * Worker stopped
+     * 
+     * @return void
      */
     public function onWorkerStop(): void
     {
         $this->logger->info('MCP Process Worker stopped');
+        self::$mcpSseConnects = [];
     }
 
     /**
-     * 连接建立
+     * connection established
+     * 
+     * @param TcpConnection $connection
+     * @return void
      */
     public function onConnect(TcpConnection $connection): void
     {
-        // 连接建立，无需特殊处理
+        // connection established, no special handling
     }
 
     /**
@@ -100,14 +130,16 @@ class Server
     public function onMessage(TcpConnection $connection, Request $request): void
     {
         $path = $request->path();
+
+        $transports = $this->getConfig('mcp.server.transport', []);
         
         try {
-            // 根据路径路由到对应的处理器
-            $response = match ($path) {
-                '/sse', '/message' => $this->handleSseMessage($connection, $request),
-                '/mcp' => $this->handleMcpMessage($connection, $request),
-                default => $this->handleError($path),
-            };
+            if ($transports['sse']['enable'] && in_array($path, $transports['sse']['route'])) {
+                $response = $this->handleSseMessage($connection, $request);
+            }
+            if ($transports['stream']['enable'] && in_array($path, $transports['stream']['route'])) {
+                $response = $this->handleMcpMessage($connection, $request);
+            }
             if (!empty($response) && is_array($response)) {
                 $this->sendResponse($connection, $response);
             }
@@ -117,42 +149,53 @@ class Server
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            $this->sendResponse($connection, [
-                'status' => 500,
-                'headers' => ['Content-Type' => 'application/json'],
-                'body' => json_encode([
-                    'error' => 'Internal Server Error',
-                    'message' => 'An error occurred while processing your request'
-                ])
-            ]);
+            $this->handleError($path);
         }
     }
 
     /**
-     * 错误处理
+     * error handling
+     * 
+     * @param TcpConnection $connection
+     * @param int $code
+     * @param string $message
+     * @return void
      */
-    public function onError(TcpConnection $connection, int $code, string $msg): void
+    public function onError(TcpConnection $connection, int $code, string $message): void
     {
         $this->logger->error('Connection error', [
             'connection_id' => $connection->id,
             'code' => $code,
-            'message' => $msg
+            'message' => $message
         ]);
+        $this->sendResponse(
+            $connection, 
+            $this->handleError(null, $code, $message)
+        );
     }
 
     /**
-     * 连接关闭
+     * connection closed
+     * 
+     * @param TcpConnection $connection
+     * @return void
      */
     public function onClose(TcpConnection $connection): void
     {
-        // 连接关闭，无需特殊处理
-        $this->logger->info('Connection closed', [
-            'connection_id' => $connection->id
-        ]);
+        // clear sse connection info
+        foreach (self::$mcpSseConnects as $sessionId => $connectionInfo) {
+            if ($connectionInfo['connection_id'] === $connection->id && $connectionInfo['worker_id'] === $this->worker->id) {
+                unset(self::$mcpSseConnects[$sessionId]);
+                break;
+            }
+        }
     }
 
     /**
-     * 处理 SSE 端点（GET /sse）
+     * handle sse message
+     * @param TcpConnection $connection
+     * @param Request $request
+     * @return mixed
      */
     private function handleSseMessage(TcpConnection $connection, Request $request): mixed
     {
@@ -162,6 +205,7 @@ class Server
             $transport = new SseHttpTransport(
                 connection: $connection,
                 request: $this->createPsrRequest($request),
+                cache: $this->globalSessionStore,
                 logger: $this->logger
             );
             
@@ -173,23 +217,20 @@ class Server
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            
-            // 发送错误响应
-            $this->sendResponse($connection, [
-                'status' => 500,
-                'headers' => ['Content-Type' => 'application/json'],
-                'body' => json_encode([
-                    'error' => 'Internal Server Error',
-                    'message' => 'Failed to establish SSE connection'
-                ])
-            ]);
-            
+            // error response
+            $this->sendResponse(
+                $connection, 
+                $this->handleError(null, 500, 'Failed to establish SSE connection')
+            );
             return null;
         }
     }
 
     /**
      * handle mcp endpoint
+     * @param TcpConnection $connection
+     * @param Request $request
+     * @return array
      */
     private function handleMcpMessage(TcpConnection $connection, Request $request): array
     {
@@ -202,82 +243,68 @@ class Server
                 streamFactory: $this->psr17Factory,
                 logger: $this->logger
             );
-            
             $response = $server->run($transport);
-            
-            // 转换 PSR-7 响应为 Webman 响应格式
             return [
                 'status' => $response->getStatusCode(),
                 'headers' => $response->getHeaders(),
                 'body' => (string)$response->getBody()
             ];
-            
         } catch (\Throwable $e) {
             $this->logger->error('MCP stream request handling error', [
                 'connection_id' => $connection->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            return [
-                'status' => 500,
-                'headers' => ['Content-Type' => 'application/json'],
-                'body' => json_encode([
-                    'error' => 'Internal Server Error',
-                    'message' => 'Failed to process MCP request'
-                ])
-            ];
+            return $this->handleError(null, 500, 'Failed to process MCP request');
         }
     }
 
     /**
      * handle error
+     * @param string|null $path
+     * @param int $status
+     * @param string $message
+     * @return array
      */
-    private function handleError(string $path): array
+    private function handleError(?string $path = null, int $status = 404, string $message = 'The service is currently unavailable'): array
     {
         return [
-            'status' => 404,
+            'status' => $status,
             'headers' => [
                 'Content-Type' => 'application/json',
                 'Access-Control-Allow-Origin' => '*'
             ],
             'body' => json_encode([
-                'error' => 'Not Found',
-                'message' => 'Not Found',
+                'error' => $status === 404 ? 'Not Found' : 'Error',
+                'message' => $message,
             ])
         ];
     }
  
     /**
      * create psr request from workerman request
+     * 
+     * @param Request|null $workermanRequest
+     * @return ServerRequestInterface
      */
     private function createPsrRequest(?Request $workermanRequest = null): ServerRequestInterface
     {
         if ($workermanRequest) {
-            // 从 Workerman Request 创建 PSR-7 Request
             $uri = $this->psr17Factory->createUri($workermanRequest->uri());
             $body = $this->psr17Factory->createStream($workermanRequest->rawBody());
-            
             $psrRequest = $this->psr17Factory->createServerRequest(
                 $workermanRequest->method(),
                 $uri,
                 $_SERVER
             );
-            
-            // 设置请求体
             $psrRequest = $psrRequest->withBody($body);
-            
-            // 设置请求头
             foreach ($workermanRequest->header() as $name => $value) {
                 $psrRequest = $psrRequest->withHeader($name, $value);
             }
-            
-            // 设置查询参数
             $psrRequest = $psrRequest->withQueryParams($workermanRequest->get());
-            
             return $psrRequest;
         }
-        
-        // 回退到全局变量
+        // create psr request from globals
         $creator = new ServerRequestCreator(
             $this->psr17Factory,
             $this->psr17Factory,
@@ -290,23 +317,51 @@ class Server
 
     /**
      * create mcp server instance
+     * 
+     * @return McpServer
      */
     private function createMcpServer(): McpServer
     {
-        return McpServer::builder()
+        $builder = McpServer::builder()
             ->setServerInfo(
-                config(sprintf(self::CONFIG_PREFIX, 'mcp.server.name')),
-                config(sprintf(self::CONFIG_PREFIX, 'mcp.server.version')),
-                config(sprintf(self::CONFIG_PREFIX, 'mcp.server.description'))
-            )
-            ->setDiscovery(
-                config(sprintf(self::CONFIG_PREFIX, 'mcp.server.discover.base_path'), base_path()),
-                config(sprintf(self::CONFIG_PREFIX, 'mcp.server.discover.scan_dirs'), ['app/mcp']),
-                config(sprintf(self::CONFIG_PREFIX, 'mcp.server.discover.exclude_dirs'), [])
+                $this->getConfig('mcp.server.name'),
+                $this->getConfig('mcp.server.version'),
+                $this->getConfig('mcp.server.description')
             )
             ->setSession($this->globalSessionStore)
-            ->setLogger($this->logger)
-            ->build();
+            ->setLogger($this->logger);
+        
+        $discoveryConfig = $this->getConfig('mcp.server.discover', []);
+        // configure discovery cache
+        $enableCached = (bool) $discoveryConfig['cache']['enable'];
+        $discoveryTtl = (int) $discoveryConfig['cache']['ttl'];
+        $cacheStoreName = (string) $discoveryConfig['cache']['store'];
+        // set discovery
+        try {
+            $cacheAdapter = $enableCached ? WebmanCache::forDiscovery($cacheStoreName, $discoveryTtl) : null;
+
+            $builder->setDiscovery(
+                $discoveryConfig['base_path'],
+                $discoveryConfig['scan_dirs'],
+                $discoveryConfig['exclude_dirs'],
+                $cacheAdapter
+            );
+            
+            $this->logger->info('MCP Discovery configured successfully', [
+                'base_path' => $discoveryConfig['base_path'],
+                'scan_dirs' => $discoveryConfig['scan_dirs'],
+                'exclude_dirs' => $discoveryConfig['exclude_dirs'],
+                'cache_enabled' => $enableCached
+            ]);
+        } catch (\Throwable $e) {
+            $this->logger->error('Failed to configure MCP Discovery', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
+        
+        return $builder->build();
     }
 
     /**
@@ -324,7 +379,57 @@ class Server
     }
 
     /**
+     * get config
+     * @param string $key
+     * @return mixed
+     */
+    private function getConfig(string $key, $default = null): mixed
+    {
+        return config(sprintf(self::CONFIG_PREFIX, $key), $default);
+    }
+
+    /**
+     * start channel client
+     * this is used to send messages to the client
+     * @param Worker $worker
+     * @return void
+     */
+    private function startChannelClient(Worker $worker): void
+    {
+        Client::connect('127.0.0.1', 2206);
+        Client::on('mcp_sse_connects', function ($message){
+            if (!isset(self::$mcpSseConnects[$message['session_id']])) {
+                self::$mcpSseConnects[$message['session_id']] = $message;
+            }
+        });
+        Client::on('mcp_sse_events', function ($message) use ($worker) {
+            if (!isset(self::$mcpSseConnects[$message['session_id']])) {
+                return;
+            }
+            $connectionInfo = self::$mcpSseConnects[$message['session_id']];
+            if ($worker->id === $connectionInfo['worker_id']) {
+                if (isset($worker->connections[$connectionInfo['connection_id']])) {
+                    $connection = $worker->connections[$connectionInfo['connection_id']];
+                    $connection->send($this->sendMessage($message['data']), true);
+                }
+            }
+        });
+    }
+    /**
+     * send message to client
+     * @param array $content
+     * @return string
+     */
+    private function sendMessage(array $content = []): string
+    {
+        $message = new ServerSentEvents($content);
+        return $message->__toString();
+    }
+    /**
      * send response to client
+     * @param TcpConnection $connection
+     * @param array $response
+     * @return void
      */
     private function sendResponse(TcpConnection $connection, array $response): void
     {

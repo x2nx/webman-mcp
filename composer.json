@@ -13,9 +13,13 @@
   "minimum-stability": "dev",
   "require": {
     "mcp/sdk": "dev-main",
+    "psr/simple-cache": "^3.0",
     "webman/console": "^2.1",
-    "revolt/event-loop": "^1.0",
-    "nyholm/psr7": "^1.8"
+    "webman/channel": "^2.1",
+    "webman/redis": "^2.1",
+    "webman/cache": "^2.1",
+    "nyholm/psr7": "^1.8",
+    "nyholm/psr7-server": "^1.1"
   },
   "autoload": {
     "psr-4": {

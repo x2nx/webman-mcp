@@ -1,14 +1,4 @@
 <?php
-
-/*
- * This file is part of the official PHP MCP SDK.
- *
- * A collaboration between Symfony and the PHP Foundation.
- *
- * For the full copyright and license information, please view the LICENSE
- * file that was distributed with this source code.
- */
-
 namespace X2nx\WebmanMcp\Transport;
 
 use Mcp\Server\Transport\TransportInterface;
@@ -19,6 +9,8 @@ use Symfony\Component\Uid\Uuid;
 use Workerman\Connection\TcpConnection;
 use Workerman\Protocols\Http\ServerSentEvents;
 use support\Response;
+use Webman\Channel\Client;
+use X2nx\WebmanMcp\Cache\Webman as WebmanCache;
 
 /**
  * @author OK Xaas <x@x2nx.com>
@@ -33,9 +25,7 @@ class SseHttpTransport implements TransportInterface
 
     private ?Uuid $sessionId = null;
 
-    private static array $ACTIVE_STREAMS = [];
-
-    private static array $ACTIVE_SESSIONS = [];
+    private static array $activeSessions = [];
 
     private ?string $activeSessionId = null;
 
@@ -54,13 +44,14 @@ class SseHttpTransport implements TransportInterface
     private array $corsHeaders = [
         'Access-Control-Allow-Origin' => '*',
         'Access-Control-Allow-Methods' => 'GET, POST, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers' => 'Content-Type, Mcp-Session-Id, Last-Event-ID, Authorization, Accept',
+        'Access-Control-Allow-Headers' => 'Content-Type, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID, Authorization, Accept',
     ];
 
     public function __construct(
         private readonly TcpConnection $connection,
         private readonly ServerRequestInterface $request,
-        private readonly LoggerInterface $logger = new NullLogger(),
+        private readonly WebmanCache $cache,
+        private readonly LoggerInterface $logger = new NullLogger()
     ) {
         $sessionIdString = $this->request->getHeaderLine('mcp-session-id');
         $this->sessionId = $sessionIdString ? Uuid::fromString($sessionIdString) : null;
@@ -72,19 +63,20 @@ class SseHttpTransport implements TransportInterface
     {
         if (isset($context['session_id'])) {
             $this->sessionId = $context['session_id'];
+            $this->cache->set(sprintf('mcp:sse:session:active:%s', $this->activeSessionId), $this->sessionId);
         }
-
-        if (isset(self::$ACTIVE_STREAMS[$this->activeSessionId])) {
-            self::$ACTIVE_STREAMS[$this->activeSessionId]->send($this->sendMessage([
+        Client::publish('mcp_sse_events', [
+            'session_id' => $this->activeSessionId,
+            'data'  => [
                 'event' => 'message',
                 'data' => $data,
-            ]), true);
-            self::$ACTIVE_SESSIONS[$this->activeSessionId] = $this->sessionId;
-        }
+            ],
+        ]);
     }
 
     public function listen(): mixed
     {
+        Client::connect('127.0.0.1', 2206);
         return match ($this->request->getMethod()) {
             'OPTIONS' => $this->handleOptionsRequest(),
             'GET' => $this->handleGetRequest(),
@@ -120,9 +112,11 @@ class SseHttpTransport implements TransportInterface
             ]);
             return;
         }
+
+        $this->sessionId = $this->cache->get(sprintf('mcp:sse:session:active:%s', $this->activeSessionId));
         
-        $this->sessionId = self::$ACTIVE_SESSIONS[$this->activeSessionId] ?? null;
         $body = (string)$this->request->getBody()->getContents();
+        
         if (empty($body)) {
             $this->logger->warning('Client sent empty request body.');
             $this->sendJsonResponse(400, [], [
@@ -138,7 +132,7 @@ class SseHttpTransport implements TransportInterface
 
         $this->sendResponse(204, array_merge($this->corsHeaders, [
             'Connection' => 'close',
-            'Mcp-Session-Id' => $this->sessionId?->toRfc4122(),
+            'Mcp-Session-Id' => $this->activeSessionId,
         ]), 'Accepted', true, true);
     }
 
@@ -147,9 +141,13 @@ class SseHttpTransport implements TransportInterface
         if (empty($this->activeSessionId)) {
             $this->activeSessionId = Uuid::v4();
         }
-        if (!isset(self::$ACTIVE_STREAMS[$this->activeSessionId])) {
-            self::$ACTIVE_STREAMS[$this->activeSessionId] = $this->connection;
-        }
+
+        Client::publish('mcp_sse_connects', [
+            'worker_id' => $this->connection->worker->id,
+            'connection_id' => $this->connection->id,
+            'session_id' => $this->activeSessionId,
+        ]);
+
         $this->sendResponse(200, $this->sseHeaders, "\n" . $this->sendMessage([
             'event' => 'endpoint',
             'data'  => sprintf('/message?sessionId=%s', $this->activeSessionId),
@@ -166,7 +164,6 @@ class SseHttpTransport implements TransportInterface
             ]);
             return;
         }
-
         if (\is_callable($this->sessionEndListener)) {
             \call_user_func($this->sessionEndListener, $this->sessionId);
         }
