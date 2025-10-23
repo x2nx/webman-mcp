@@ -33,11 +33,8 @@
 ### 安装步骤
 
 ```bash
-# 1. 安装插件
+# 安装插件
 composer require x2nx/webman-mcp
-
-# 2. 发布配置文件（可选）
-php webman plugin:publish x2nx/webman-mcp
 ```
 
 ## 🚀 快速开始

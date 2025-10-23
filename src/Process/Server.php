@@ -132,6 +132,8 @@ class Server
         $path = $request->path();
 
         $transports = $this->getConfig('mcp.server.transport', []);
+
+        $response = $this->handleError($path);
         
         try {
             if ($transports['sse']['enable'] && in_array($path, $transports['sse']['route'])) {
