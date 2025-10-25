@@ -10,6 +10,7 @@ use Psr\Clock\ClockInterface;
 use Psr\SimpleCache\CacheInterface;
 use Symfony\Component\Uid\Uuid;
 use support\Cache;
+use support\Log;
 
 /**
  * Cache type enumeration for different MCP cache purposes
@@ -32,12 +33,12 @@ class Webman implements SessionStoreInterface, CacheInterface
     /**
      * Cache key prefix for MCP sessions
      */
-    private const SESSION_CACHE_PREFIX = 'mcp:session:';
+    private const SESSION_CACHE_PREFIX = 'mcp_session_';
     
     /**
      * Cache key prefix for MCP discovery
      */
-    private const DISCOVERY_CACHE_PREFIX = 'mcp:discovery:';
+    private const DISCOVERY_CACHE_PREFIX = 'mcp_discovery_';
     
     /**
      * Cache store name (empty for default)
@@ -84,7 +85,13 @@ class Webman implements SessionStoreInterface, CacheInterface
             $data = $this->getCache()->get($key);
             
             return $data !== null && $data !== false;
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::channel('mcp')->error('Failed to exists session cache: ', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return false;
         }
     }
@@ -100,7 +107,13 @@ class Webman implements SessionStoreInterface, CacheInterface
             }
             
             return $data;
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::channel('mcp')->error('Failed to read session cache: ', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return false;
         }
     }
@@ -110,7 +123,13 @@ class Webman implements SessionStoreInterface, CacheInterface
         try {
             $key = $this->getSessionCacheKey($sessionId);
             return $this->getCache()->set($key, $data, $this->defaultTtl);
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::channel('mcp')->error('Failed to write session cache: ', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return false;
         }
     }
@@ -121,7 +140,13 @@ class Webman implements SessionStoreInterface, CacheInterface
             $key = $this->getSessionCacheKey($sessionId);
             $this->getCache()->delete($key);
             return true;
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::channel('mcp')->error('Failed to destroy session cache: ', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return false;
         }
     }
@@ -143,7 +168,13 @@ class Webman implements SessionStoreInterface, CacheInterface
             }
             
             return $value;
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::channel('mcp')->error('Failed to get cache: ', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return $default;
         }
     }
@@ -154,7 +185,13 @@ class Webman implements SessionStoreInterface, CacheInterface
             $cacheKey = $this->getPrefixedKey($key);
             $ttlSeconds = $this->normalizeTtl($ttl);
             return $this->getCache()->set($cacheKey, $value, $ttlSeconds);
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::channel('mcp')->error('Failed to set cache: ', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return false;
         }
     }
@@ -164,7 +201,13 @@ class Webman implements SessionStoreInterface, CacheInterface
         try {
             $cacheKey = $this->getPrefixedKey($key);
             return $this->getCache()->delete($cacheKey);
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::channel('mcp')->error('Failed to delete cache: ', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return false;
         }
     }
@@ -173,7 +216,13 @@ class Webman implements SessionStoreInterface, CacheInterface
     {
         try {
             return $this->getCache()->clear();
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::channel('mcp')->error('Failed to clear caches: ', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return false;
         }
     }
@@ -201,7 +250,13 @@ class Webman implements SessionStoreInterface, CacheInterface
             }
             
             return $success;
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::channel('mcp')->error('Failed to set multiple caches: ', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return false;
         }
     }
@@ -218,7 +273,13 @@ class Webman implements SessionStoreInterface, CacheInterface
             }
             
             return $success;
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::channel('mcp')->error('Failed to delete multiple caches: ', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return false;
         }
     }
@@ -229,7 +290,13 @@ class Webman implements SessionStoreInterface, CacheInterface
             $cacheKey = $this->getPrefixedKey($key);
             $value = $this->getCache()->get($cacheKey);
             return $value !== null && $value !== false;
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::channel('mcp')->error('Failed to has check cache: ', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
             return false;
         }
     }
@@ -283,6 +350,12 @@ class Webman implements SessionStoreInterface, CacheInterface
                     $this->cacheInstance = Cache::store($this->store);
                 }
             } catch (\Throwable $e) {
+                Log::channel('mcp')->error('Failed to create cache instance: ', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                ]);
                 throw new \RuntimeException('Failed to create cache instance: ' . $e->getMessage(), 0, $e);
             }
         }

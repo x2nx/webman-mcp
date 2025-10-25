@@ -63,7 +63,7 @@ class SseHttpTransport implements TransportInterface
     {
         if (isset($context['session_id'])) {
             $this->sessionId = $context['session_id'];
-            $this->cache->set(sprintf('mcp:sse:session:active:%s', $this->activeSessionId), $this->sessionId);
+            $this->cache->set(sprintf('mcp_sse_session_active_%s', $this->activeSessionId), $this->sessionId);
         }
         Client::publish('mcp_sse_events', [
             'session_id' => $this->activeSessionId,
@@ -113,7 +113,7 @@ class SseHttpTransport implements TransportInterface
             return;
         }
 
-        $this->sessionId = $this->cache->get(sprintf('mcp:sse:session:active:%s', $this->activeSessionId));
+        $this->sessionId = $this->cache->get(sprintf('mcp_sse_session_active_%s', $this->activeSessionId));
         
         $body = (string)$this->request->getBody()->getContents();
         

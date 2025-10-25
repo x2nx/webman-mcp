@@ -59,11 +59,10 @@ class Server
             $this->logger = Log::channel(sprintf(self::CONFIG_PREFIX, 'mcp'));
             $this->worker = $worker;
             $this->psr17Factory = new Psr17Factory();
-            
-            // create global shared session store (based on webman Cache)
-            $sessionTtl = (int) config(sprintf(self::CONFIG_PREFIX, 'mcp.session.ttl'), 3600);
-            $sessionStoreName = (string) config(sprintf(self::CONFIG_PREFIX, 'mcp.session.store'), '');
-            
+
+            $sessionConfig = $this->getConfig('mcp.server.session', []);
+            $sessionTtl = (int) $sessionConfig['ttl'] ?? 3600;
+            $sessionStoreName = (string) $sessionConfig['store'] ?? '';
             try {
                 $this->globalSessionStore = WebmanCache::forSessions($sessionStoreName, $sessionTtl);
                 $this->logger->info('Using Webman CacheSessionStore for MCP sessions', [
