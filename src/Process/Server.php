@@ -3,7 +3,6 @@ namespace X2nx\WebmanMcp\Process;
 
 use Webman\Channel\Client;
 use Workerman\Worker;
-use Workerman\Protocols\Http\ServerSentEvents;
 use Workerman\Protocols\Http\Request;
 use Workerman\Connection\TcpConnection;
 use Mcp\Server as McpServer;
@@ -411,20 +410,10 @@ class Server
             if ($worker->id === $connectionInfo['worker_id']) {
                 if (isset($worker->connections[$connectionInfo['connection_id']])) {
                     $connection = $worker->connections[$connectionInfo['connection_id']];
-                    $connection->send($this->sendMessage($message['data']), true);
+                    $connection->send($message['data'], true);
                 }
             }
         });
-    }
-    /**
-     * send message to client
-     * @param array $content
-     * @return string
-     */
-    private function sendMessage(array $content = []): string
-    {
-        $message = new ServerSentEvents($content);
-        return $message->__toString();
     }
     /**
      * send response to client

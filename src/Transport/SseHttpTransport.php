@@ -1,6 +1,7 @@
 <?php
 namespace X2nx\WebmanMcp\Transport;
 
+use Mcp\Server\Transport\BaseTransport;
 use Mcp\Server\Transport\TransportInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Log\LoggerInterface;
@@ -15,18 +16,8 @@ use X2nx\WebmanMcp\Cache\Webman as WebmanCache;
 /**
  * @author OK Xaas <x@x2nx.com>
  */
-class SseHttpTransport implements TransportInterface
+class SseHttpTransport extends BaseTransport implements TransportInterface
 {
-    /** @var callable(string, ?Uuid): void */
-    private $messageListener;
-
-    /** @var callable(Uuid): void */
-    private $sessionEndListener;
-
-    private ?Uuid $sessionId = null;
-
-    private static array $activeSessions = [];
-
     private ?string $activeSessionId = null;
 
     private array $sseHeaders = [
@@ -51,27 +42,16 @@ class SseHttpTransport implements TransportInterface
         private readonly TcpConnection $connection,
         private readonly ServerRequestInterface $request,
         private readonly WebmanCache $cache,
-        private readonly LoggerInterface $logger = new NullLogger()
+        protected readonly LoggerInterface $logger = new NullLogger()
     ) {
-        $sessionIdString = $this->request->getHeaderLine('mcp-session-id');
+        $sessionIdString = $this->request->getHeaderLine('Mcp-Session-Id');
         $this->sessionId = $sessionIdString ? Uuid::fromString($sessionIdString) : null;
     }
 
-    public function initialize(): void{}
-
-    public function send(string $data, array $context): void
-    {
-        if (isset($context['session_id'])) {
-            $this->sessionId = $context['session_id'];
-            $this->cache->set(sprintf('mcp_sse_session_active_%s', $this->activeSessionId), $this->sessionId);
+    public function send(string $data, array $context): void {
+        if (!empty($data)) {
+            $this->sendChannelMessage($data['message']);
         }
-        Client::publish('mcp_sse_events', [
-            'session_id' => $this->activeSessionId,
-            'data'  => [
-                'event' => 'message',
-                'data' => $data,
-            ],
-        ]);
     }
 
     public function listen(): mixed
@@ -89,11 +69,6 @@ class SseHttpTransport implements TransportInterface
     public function onMessage(callable $listener): void
     {
         $this->messageListener = $listener;
-    }
-
-    public function onSessionEnd(callable $listener): void
-    {
-        $this->sessionEndListener = $listener;
     }
 
     protected function handleOptionsRequest()
@@ -114,8 +89,8 @@ class SseHttpTransport implements TransportInterface
         }
 
         $this->sessionId = $this->cache->get(sprintf('mcp_sse_session_active_%s', $this->activeSessionId));
-        
-        $body = (string)$this->request->getBody()->getContents();
+
+        $body = $this->request->getBody()->getContents();
         
         if (empty($body)) {
             $this->logger->warning('Client sent empty request body.');
@@ -126,8 +101,24 @@ class SseHttpTransport implements TransportInterface
             return;
         }
 
-        if (\is_callable($this->messageListener)) {
-            \call_user_func($this->messageListener, $body, $this->sessionId);
+        $this->handleMessage($body, $this->sessionId);
+
+        $sessionKey = sprintf('mcp_sse_session_active_%s', $this->activeSessionId);
+
+        if (!empty($this->sessionId) && !$this->cache->has($sessionKey)) {
+            $this->cache->set($sessionKey, $this->sessionId);
+        }
+
+        $messages = $this->getOutgoingMessages($this->sessionId);
+
+        foreach ($messages as $message) {
+            Client::publish('mcp_sse_events', [
+                'session_id' => $this->activeSessionId,
+                'data'  => $this->sendMessage([
+                    'event' => 'message',
+                    'data' => $message['message'],
+                ]),
+            ]);
         }
 
         $this->sendResponse(204, array_merge($this->corsHeaders, [
@@ -164,9 +155,7 @@ class SseHttpTransport implements TransportInterface
             ]);
             return;
         }
-        if (\is_callable($this->sessionEndListener)) {
-            \call_user_func($this->sessionEndListener, $this->sessionId);
-        }
+        $this->handleSessionEnd($this->sessionId);
         $this->sendResponse(204, $this->corsHeaders, '');
     }
 
@@ -184,6 +173,16 @@ class SseHttpTransport implements TransportInterface
     {
         $message = new ServerSentEvents($content);
         return $message->__toString();
+    }
+
+    private function sendChannelMessage(string $content = ''): void {
+        Client::publish('mcp_sse_events', [
+            'session_id' => $this->activeSessionId,
+            'data'  => $this->sendMessage([
+                'event' => 'message',
+                'data' => $content,
+            ]),
+        ]);
     }
 
     private function sendJsonResponse(int $status = 200, array $headers = [], array $body = []): void
