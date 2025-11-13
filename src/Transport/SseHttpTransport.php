@@ -42,8 +42,9 @@ class SseHttpTransport extends BaseTransport implements TransportInterface
         private readonly TcpConnection $connection,
         private readonly ServerRequestInterface $request,
         private readonly WebmanCache $cache,
-        protected readonly LoggerInterface $logger = new NullLogger()
+        LoggerInterface $logger = new NullLogger()
     ) {
+        parent::__construct($logger);
         $sessionIdString = $this->request->getHeaderLine('Mcp-Session-Id');
         $this->sessionId = $sessionIdString ? Uuid::fromString($sessionIdString) : null;
     }
@@ -64,11 +65,6 @@ class SseHttpTransport extends BaseTransport implements TransportInterface
             'DELETE' => $this->handleDeleteRequest(),
             default => $this->handleUnsupportedRequest(),
         };
-    }
-
-    public function onMessage(callable $listener): void
-    {
-        $this->messageListener = $listener;
     }
 
     protected function handleOptionsRequest()
@@ -114,7 +110,7 @@ class SseHttpTransport extends BaseTransport implements TransportInterface
         foreach ($messages as $message) {
             Client::publish('mcp_sse_events', [
                 'session_id' => $this->activeSessionId,
-                'data'  => $this->sendMessage([
+                'data'  => $this->formatSseMessage([
                     'event' => 'message',
                     'data' => $message['message'],
                 ]),
@@ -139,10 +135,16 @@ class SseHttpTransport extends BaseTransport implements TransportInterface
             'session_id' => $this->activeSessionId,
         ]);
 
-        $this->sendResponse(200, $this->sseHeaders, "\n" . $this->sendMessage([
-            'event' => 'endpoint',
-            'data'  => sprintf('/message?sessionId=%s', $this->activeSessionId),
-        ]), true, true);
+        try {
+            $this->sendResponse(200, $this->sseHeaders, '', true, true);
+            $this->sendSseMessage([
+                'event' => 'endpoint',
+                'data'  => sprintf('/message?sessionId=%s', $this->activeSessionId),
+            ]);
+        } catch (\Exception $e) {
+            $this->logger->error('Error sending SSE response: ' . $e->getMessage());
+            $this->sendChannelMessage($e->getMessage());
+        }
     }
 
     protected function handleDeleteRequest()
@@ -169,20 +171,26 @@ class SseHttpTransport extends BaseTransport implements TransportInterface
 
     public function close(): void {}
 
-    private function sendMessage(array $content = []): string
+    private function sendChannelMessage(string $content = ''): void {
+        Client::publish('mcp_sse_events', [
+            'session_id' => $this->activeSessionId,
+            'data'  => $this->formatSseMessage([
+                'event' => 'message',
+                'data'  => $content,
+            ]),
+        ]);
+    }
+
+    private function formatSseMessage(array $content = []): string
     {
         $message = new ServerSentEvents($content);
         return $message->__toString();
     }
 
-    private function sendChannelMessage(string $content = ''): void {
-        Client::publish('mcp_sse_events', [
-            'session_id' => $this->activeSessionId,
-            'data'  => $this->sendMessage([
-                'event' => 'message',
-                'data' => $content,
-            ]),
-        ]);
+    private function sendSseMessage(array $content = [], bool $rawContent = true): void
+    {
+        $message = $this->formatSseMessage($content);
+        $this->connection->send($message, $rawContent);
     }
 
     private function sendJsonResponse(int $status = 200, array $headers = [], array $body = []): void
