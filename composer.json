@@ -24,6 +24,9 @@
   "autoload": {
     "psr-4": {
       "X2nx\\WebmanMcp\\": "src"
-    }
+    },
+    "files": [
+      "src/helpers.php"
+    ]
   }
 }

@@ -5,11 +5,11 @@
 ![webman-mcp](https://img.shields.io/badge/webman-mcp-blue?style=for-the-badge&logo=php)
 ![PHP](https://img.shields.io/badge/PHP-8.1+-777BB4?style=for-the-badge&logo=php&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
-![Version](https://img.shields.io/badge/Version-1.0.0-orange?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-0.1.2-orange?style=for-the-badge)
 
 **基于 MCP (Model Context Protocol) SDK 的 webman 插件，快速创建高性能 MCP 服务器**
 
-[快速开始](#-快速开始) • [文档](#-配置) • [示例](#-创建组件) • [许可证](#-许可证)
+[快速开始](#-快速开始) • [文档](#-配置) • [示例](#-创建组件) • [消息处理](#-消息处理) • [许可证](#-许可证)
 
 </div>
 
@@ -18,6 +18,7 @@
 - 🚀 **快速启动** - 支持多种传输协议，开箱即用
 - 🛠️ **命令行工具** - 快速生成 MCP 组件，提升开发效率
 - 📡 **多协议支持** - 支持 stdio、HTTP、SSE 传输模式
+- 💬 **消息处理** - 提供便捷的消息传输处理和全局辅助函数
 - 🔧 **组件管理** - 内置工具、提示和资源管理系统
 - ⚡ **高性能** - 基于 webman 框架，支持高并发处理
 - 🎯 **易于扩展** - 灵活的配置系统，支持自定义扩展
@@ -85,6 +86,47 @@ curl -X POST http://127.0.0.1:7190/message?sessionId=YOUR_SESSION_ID \
   -d '{"jsonrpc":"2.0","id":"1","method":"tools/list"}'
 ```
 
+### 4. 消息处理
+
+webman-mcp 提供了便捷的消息处理功能，支持直接处理 MCP 消息字符串：
+
+#### 使用全局辅助函数
+
+```php
+<?php
+// 处理 MCP 消息
+$message = '{"jsonrpc":"2.0","id":"1","method":"tools/list"}';
+$sessionId = '550e8400-e29b-41d4-a716-446655440000';
+
+$result = mcp_server_handle_message($message, $sessionId);
+
+// 返回格式化的响应消息数组
+foreach ($result as $response) {
+    echo "Session ID: " . $response['session_id'] . "\n";
+    echo "Message: " . $response['mcp_message'] . "\n";
+}
+```
+
+#### 使用 Server 类
+
+```php
+<?php
+use X2nx\WebmanMcp\Process\Server;
+
+$server = new Server();
+$message = '{"jsonrpc":"2.0","id":"1","method":"tools/list"}';
+$sessionId = '550e8400-e29b-41d4-a716-446655440000';
+
+$result = $server->handleMessage($message, $sessionId);
+
+// 处理返回结果
+if ($result) {
+    foreach ($result as $response) {
+        // 处理响应消息
+    }
+}
+```
+
 ## 🛠️ 创建组件
 
 webman-mcp 提供了强大的命令行工具，帮助您快速创建各种 MCP 组件：
@@ -146,6 +188,41 @@ php webman make:mcp-template ApiResourceTemplate \
 ```
 
 > 💡 **提示**: 创建组件后，重启服务即可自动发现新组件
+
+## 💬 消息处理
+
+webman-mcp 提供了灵活的消息处理机制，支持多种使用方式：
+
+### 全局辅助函数
+
+插件提供了全局辅助函数 `mcp_server_handle_message()`，方便在项目任何地方使用：
+
+```php
+<?php
+// 无需引入命名空间，直接使用
+$result = mcp_server_handle_message($message, $sessionId);
+```
+
+**函数签名：**
+```php
+function mcp_server_handle_message(string $message = '', string $sessionId = ''): mixed
+```
+
+**参数说明：**
+- `$message`: MCP 消息 JSON 字符串
+- `$sessionId`: 会话 ID（可选，用于会话管理）
+
+**返回值：**
+- 成功：返回响应消息数组
+- 失败：返回 `false`
+
+### 使用场景
+
+1. **API 接口处理** - 在 webman 路由中处理 MCP 消息
+2. **队列任务** - 异步处理 MCP 消息
+3. **命令行工具** - 在 CLI 中处理 MCP 消息
+4. **测试用例** - 单元测试和集成测试
+
 ## ⚙️ 配置
 
 ### 配置文件位置
@@ -277,6 +354,32 @@ return [
         'ttl' => 3600,    // 缓存时间
     ],
 ],
+```
+
+### Q: 如何使用消息处理功能？
+
+**A:** 可以使用全局辅助函数或 Server 类：
+
+```php
+// 方式 1: 使用全局辅助函数（推荐）
+$result = mcp_server_handle_message($message, $sessionId);
+
+// 方式 2: 使用 Server 类
+$server = new \X2nx\WebmanMcp\Process\Server();
+$result = $server->handleMessage($message, $sessionId);
+```
+
+### Q: 消息处理的响应格式是什么？
+
+**A:** 返回一个数组，每个元素包含 `session_id` 和 `mcp_message`：
+
+```php
+[
+    [
+        'session_id' => 'uuid-string',
+        'mcp_message' => '{"jsonrpc":"2.0",...}'
+    ]
+]
 ```
 
 ## 🤝 贡献

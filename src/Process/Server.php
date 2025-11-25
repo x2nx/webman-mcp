@@ -11,6 +11,7 @@ use Mcp\Server\Transport\StdioTransport;
 use Mcp\Server\Transport\StreamableHttpTransport;
 use X2nx\WebmanMcp\Cache\Webman as WebmanCache;
 use X2nx\WebmanMcp\Transport\SseHttpTransport;
+use X2nx\WebmanMcp\Transport\MessageTransport;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Nyholm\Psr7Server\ServerRequestCreator;
 use Psr\Http\Message\ServerRequestInterface;
@@ -192,6 +193,28 @@ class Server
     }
 
     /**
+     * handle mcp message
+     * @param string $message
+     * @param string $sessionId
+     * @return mixed
+     */
+    public function handleMessage(string $message = '', string $sessionId = ''): mixed {
+        if (empty($message)) {
+            return false;
+        }
+        // 初始化必要的组件
+        $this->logger = Log::channel(sprintf(self::CONFIG_PREFIX, 'mcp'));
+        $this->globalSessionStore = new FileSessionStore(runtime_path('sessions'));
+        $server = $this->createMcpServer();
+        $transport = new MessageTransport(
+            message: $message,
+            sessionId: $sessionId,
+            logger: $this->logger
+        );
+        return $server->run($transport);
+    }
+
+    /**
      * handle sse message
      * @param TcpConnection $connection
      * @param Request $request
@@ -330,7 +353,24 @@ class Server
             )
             ->setSession($this->globalSessionStore)
             ->setLogger($this->logger);
-        
+
+        $protocolVersion = $this->getConfig('mcp.server.protocol_version');
+        $paginationLimit = $this->getConfig('mcp.server.pagination', 50);
+        $instructions = $this->getConfig('mcp.server.instructions', '');
+        $capabilities = $this->getConfig('mcp.server.capabilities', []);
+
+        if (!empty($protocolVersion)) {
+            $builder->setProtocolVersion($protocolVersion);
+        }
+        if (!empty($paginationLimit)) {
+            $builder->setPaginationLimit($paginationLimit);
+        }
+        if (!empty($instructions)) {
+            $builder->setInstructions($instructions);
+        }
+        if (!empty($capabilities)) {
+            $builder->setCapabilities($capabilities);
+        }
         $discoveryConfig = $this->getConfig('mcp.server.discover', []);
         // configure discovery cache
         $enableCached = (bool) $discoveryConfig['cache']['enable'];

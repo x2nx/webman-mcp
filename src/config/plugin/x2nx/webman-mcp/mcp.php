@@ -1,11 +1,17 @@
 <?php
 
+use Mcp\Schema\Enum\ProtocolVersion;
+
 return [
     // server configuration
     'server' => [
         'name' => 'MCP Server',
         'version' => '1.0.0',
         'description' => 'MCP Server with Multi-Transport Support for Webman',
+        'protocol_version' => ProtocolVersion::V2025_06_18,
+        'pagination' => 50,
+        'instructions' => '',
+        'capabilities' => [],
         'discover' => [
             'base_path' => base_path(),
             'scan_dirs' => [
