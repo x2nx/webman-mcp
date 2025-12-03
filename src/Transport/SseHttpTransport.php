@@ -51,13 +51,16 @@ class SseHttpTransport extends BaseTransport implements TransportInterface
 
     public function send(string $data, array $context): void {
         if (!empty($data)) {
-            $this->sendChannelMessage($data['message']);
+            // $data is a string, not an array, so we send it directly
+            $this->sendChannelMessage($data);
         }
     }
 
     public function listen(): mixed
     {
-        Client::connect('127.0.0.1', 2206);
+        $channelHost = config('plugin.x2nx.webman-mcp.channel.host', '127.0.0.1');
+        $channelPort = config('plugin.x2nx.webman-mcp.channel.port', 2206);
+        Client::connect($channelHost, $channelPort);
         return match ($this->request->getMethod()) {
             'OPTIONS' => $this->handleOptionsRequest(),
             'GET' => $this->handleGetRequest(),
@@ -126,7 +129,7 @@ class SseHttpTransport extends BaseTransport implements TransportInterface
     protected function handleGetRequest()
     {
         if (empty($this->activeSessionId)) {
-            $this->activeSessionId = Uuid::v4();
+            $this->activeSessionId = (string) Uuid::v4();
         }
 
         Client::publish('mcp_sse_connects', [
@@ -141,8 +144,11 @@ class SseHttpTransport extends BaseTransport implements TransportInterface
                 'event' => 'endpoint',
                 'data'  => sprintf('/message?sessionId=%s', $this->activeSessionId),
             ]);
-        } catch (\Exception $e) {
-            $this->logger->error('Error sending SSE response: ' . $e->getMessage());
+        } catch (\Throwable $e) {
+            $this->logger->error('Error sending SSE response', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             $this->sendChannelMessage($e->getMessage());
         }
     }

@@ -31,7 +31,7 @@ class MessageTransport extends BaseTransport implements TransportInterface
 
     public function send(string $data, array $context): void
     {
-        if (isset($context['session_id'])) {
+        if (isset($context['session_id']) && $context['session_id'] instanceof \Symfony\Component\Uid\Uuid) {
             $this->sessionId = $context['session_id'];
         }
         if (!empty($data)) {
@@ -42,7 +42,7 @@ class MessageTransport extends BaseTransport implements TransportInterface
     }
 
     /**
-     * @return null
+     * @return array<int, array<string, string>>
      */
     public function listen(): mixed
     {
@@ -52,6 +52,7 @@ class MessageTransport extends BaseTransport implements TransportInterface
 
         $this->messages = array_merge($this->messages, $this->getOutgoingMessages($this->sessionId));
 
+        $responseMessages = [];
         foreach ($this->messages as $message) {
             $responseMessages[] = [
                 'session_id'    => $this->sessionId?->toRfc4122() ?? '',

@@ -5,11 +5,11 @@
 ![webman-mcp](https://img.shields.io/badge/webman-mcp-blue?style=for-the-badge&logo=php)
 ![PHP](https://img.shields.io/badge/PHP-8.1+-777BB4?style=for-the-badge&logo=php&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
-![Version](https://img.shields.io/badge/Version-0.1.2-orange?style=for-the-badge)
+![Version](https://img.shields.io/badge/Version-0.1.3-orange?style=for-the-badge)
 
 **基于 MCP (Model Context Protocol) SDK 的 webman 插件，快速创建高性能 MCP 服务器**
 
-[快速开始](#-快速开始) • [文档](#-配置) • [示例](#-创建组件) • [消息处理](#-消息处理) • [许可证](#-许可证)
+[快速开始](#-快速开始) • [创建组件](#️-创建组件) • [消息处理](#-消息处理) • [配置说明](#️-配置说明) • [常见问题](#-常见问题)
 
 </div>
 
@@ -52,6 +52,8 @@ php webman start
 
 ### 2. 测试连接
 
+#### HTTP 流式传输测试
+
 ```bash
 # 测试 MCP 连接
 curl -vvv -X POST http://127.0.0.1:7190/mcp \
@@ -74,62 +76,21 @@ curl -vvv -X POST http://127.0.0.1:7190/mcp \
   }'
 ```
 
-### 3. SSE 模式测试
+#### SSE 模式测试
 
 ```bash
-# 建立 SSE 连接
+# 1. 建立 SSE 连接（获取 sessionId）
 curl -N -H "Accept: text/event-stream" http://127.0.0.1:7190/sse
 
-# 发送消息
-curl -X POST http://127.0.0.1:7190/message?sessionId=YOUR_SESSION_ID \
+# 2. 发送消息（使用上一步获取的 sessionId）
+curl -X POST "http://127.0.0.1:7190/message?sessionId=YOUR_SESSION_ID" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":"1","method":"tools/list"}'
 ```
 
-### 4. 消息处理
-
-webman-mcp 提供了便捷的消息处理功能，支持直接处理 MCP 消息字符串：
-
-#### 使用全局辅助函数
-
-```php
-<?php
-// 处理 MCP 消息
-$message = '{"jsonrpc":"2.0","id":"1","method":"tools/list"}';
-$sessionId = '550e8400-e29b-41d4-a716-446655440000';
-
-$result = mcp_server_handle_message($message, $sessionId);
-
-// 返回格式化的响应消息数组
-foreach ($result as $response) {
-    echo "Session ID: " . $response['session_id'] . "\n";
-    echo "Message: " . $response['mcp_message'] . "\n";
-}
-```
-
-#### 使用 Server 类
-
-```php
-<?php
-use X2nx\WebmanMcp\Process\Server;
-
-$server = new Server();
-$message = '{"jsonrpc":"2.0","id":"1","method":"tools/list"}';
-$sessionId = '550e8400-e29b-41d4-a716-446655440000';
-
-$result = $server->handleMessage($message, $sessionId);
-
-// 处理返回结果
-if ($result) {
-    foreach ($result as $response) {
-        // 处理响应消息
-    }
-}
-```
-
 ## 🛠️ 创建组件
 
-webman-mcp 提供了强大的命令行工具，帮助您快速创建各种 MCP 组件：
+webman-mcp 提供了强大的命令行工具，帮助您快速创建各种 MCP 组件。
 
 ### 创建工具 (Tools)
 
@@ -191,16 +152,29 @@ php webman make:mcp-template ApiResourceTemplate \
 
 ## 💬 消息处理
 
-webman-mcp 提供了灵活的消息处理机制，支持多种使用方式：
+webman-mcp 提供了灵活的消息处理机制，支持在代码中直接处理 MCP 消息。
 
 ### 全局辅助函数
 
-插件提供了全局辅助函数 `mcp_server_handle_message()`，方便在项目任何地方使用：
+插件提供了两个全局辅助函数，方便在项目任何地方使用：
+
+#### `mcp_server_handle_message()` - 处理消息
 
 ```php
 <?php
-// 无需引入命名空间，直接使用
+// 处理 MCP 消息
+$message = '{"jsonrpc":"2.0","id":"1","method":"tools/list"}';
+$sessionId = '550e8400-e29b-41d4-a716-446655440000';
+
 $result = mcp_server_handle_message($message, $sessionId);
+
+// 返回格式化的响应消息数组
+if ($result) {
+    foreach ($result as $response) {
+        echo "Session ID: " . $response['session_id'] . "\n";
+        echo "Message: " . $response['mcp_message'] . "\n";
+    }
+}
 ```
 
 **函数签名：**
@@ -209,21 +183,81 @@ function mcp_server_handle_message(string $message = '', string $sessionId = '')
 ```
 
 **参数说明：**
-- `$message`: MCP 消息 JSON 字符串
+- `$message`: MCP 消息 JSON 字符串（必需）
 - `$sessionId`: 会话 ID（可选，用于会话管理）
 
 **返回值：**
-- 成功：返回响应消息数组
+- 成功：返回响应消息数组，格式为 `[['session_id' => '...', 'mcp_message' => '...'], ...]`
 - 失败：返回 `false`
+
+#### `mcp_server()` - 获取服务器实例
+
+```php
+<?php
+// 获取 MCP 服务器实例
+$server = mcp_server();
+
+// 或者设置自定义服务器实例
+$customServer = McpServer::builder()->build();
+$server = mcp_server($customServer);
+```
+
+**函数签名：**
+```php
+function mcp_server(?McpServer $server = null): McpServer
+```
+
+### 使用 Server 类
+
+如果需要更多控制，可以直接使用 `Server` 类：
+
+```php
+<?php
+use X2nx\WebmanMcp\Process\Server;
+
+// 使用单例实例
+$server = Server::instance();
+$result = $server->handleMessage($message, $sessionId);
+
+// 或创建新实例
+$server = new Server();
+$result = $server->handleMessage($message, $sessionId);
+```
 
 ### 使用场景
 
 1. **API 接口处理** - 在 webman 路由中处理 MCP 消息
-2. **队列任务** - 异步处理 MCP 消息
-3. **命令行工具** - 在 CLI 中处理 MCP 消息
-4. **测试用例** - 单元测试和集成测试
+   ```php
+   Route::post('/api/mcp', function (Request $request) {
+       $message = $request->post('message');
+       $sessionId = $request->post('session_id', '');
+       return json(mcp_server_handle_message($message, $sessionId));
+   });
+   ```
 
-## ⚙️ 配置
+2. **队列任务** - 异步处理 MCP 消息
+   ```php
+   class ProcessMcpMessageJob {
+       public function handle($message, $sessionId) {
+           return mcp_server_handle_message($message, $sessionId);
+       }
+   }
+   ```
+
+3. **命令行工具** - 在 CLI 中处理 MCP 消息
+   ```php
+   php artisan mcp:process "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"tools/list\"}"
+   ```
+
+4. **测试用例** - 单元测试和集成测试
+   ```php
+   public function testMcpMessage() {
+       $result = mcp_server_handle_message($testMessage);
+       $this->assertIsArray($result);
+   }
+   ```
+
+## ⚙️ 配置说明
 
 ### 配置文件位置
 
@@ -231,12 +265,27 @@ function mcp_server_handle_message(string $message = '', string $sessionId = '')
 
 ```php
 <?php
+
+use Mcp\Schema\Enum\ProtocolVersion;
+
 return [
     // 服务器配置
     'server' => [
         'name' => 'MCP Server',
         'version' => '1.0.0',
         'description' => 'MCP Server with Multi-Transport Support for Webman',
+        
+        // 协议版本
+        'protocol_version' => ProtocolVersion::V2025_06_18,
+        
+        // 分页配置
+        'pagination' => 50,
+        
+        // 服务器指令描述
+        'instructions' => '',
+        
+        // 服务器能力配置
+        'capabilities' => [],
         
         // 组件发现配置
         'discover' => [
@@ -286,17 +335,28 @@ return [
 ];
 ```
 
-### 配置说明
+### 配置项说明
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `server.name` | 服务器名称 | MCP Server |
-| `server.version` | 服务器版本 | 1.0.0 |
-| `discover.scan_dirs` | 扫描目录 | `['app/mcp']` |
-| `discover.cache.enable` | 启用发现缓存 | `false` |
-| `transport.sse.enable` | 启用 SSE 传输 | `true` |
-| `transport.stream.enable` | 启用流式传输 | `true` |
-| `session.ttl` | 会话过期时间 | `3600` |
+| 配置项 | 说明 | 类型 | 默认值 |
+|--------|------|------|--------|
+| `server.name` | 服务器名称 | string | `MCP Server` |
+| `server.version` | 服务器版本 | string | `1.0.0` |
+| `server.description` | 服务器描述 | string | - |
+| `server.protocol_version` | MCP 协议版本 | ProtocolVersion | `V2025_06_18` |
+| `server.pagination` | 分页大小 | int | `50` |
+| `server.instructions` | 服务器指令描述 | string | `''` |
+| `server.capabilities` | 服务器能力配置 | array | `[]` |
+| `discover.scan_dirs` | 组件扫描目录 | array | `['app/mcp']` |
+| `discover.exclude_dirs` | 排除扫描目录 | array | 见配置示例 |
+| `discover.cache.enable` | 启用发现缓存 | bool | `false` |
+| `discover.cache.ttl` | 缓存过期时间（秒） | int | `3600` |
+| `discover.cache.store` | 缓存存储名称 | string | `''` |
+| `transport.sse.enable` | 启用 SSE 传输 | bool | `true` |
+| `transport.sse.route` | SSE 路由端点 | array | `['/sse', '/message']` |
+| `transport.stream.enable` | 启用流式传输 | bool | `true` |
+| `transport.stream.route` | 流式传输路由端点 | array | `['/mcp']` |
+| `session.ttl` | 会话过期时间（秒） | int | `3600` |
+| `session.store` | 会话存储名称 | string | `''` |
 
 ## 🚀 部署
 
@@ -314,7 +374,38 @@ php webman stop
 
 # 重启服务
 php webman restart
+
+# 查看日志
+tail -f runtime/logs/webman.log
 ```
+
+### 性能优化建议
+
+1. **启用组件发现缓存** - 减少文件扫描开销
+   ```php
+   'discover' => [
+       'cache' => [
+           'enable' => true,
+           'ttl' => 3600,
+       ],
+   ],
+   ```
+
+2. **使用 Redis 缓存** - 提升会话和发现缓存性能
+   ```php
+   'session' => [
+       'store' => 'redis',  // 使用 Redis 存储
+   ],
+   ```
+
+3. **调整 Worker 进程数** - 根据服务器配置调整
+   ```php
+   // config/process.php
+   'mcp' => [
+       'handler' => ...,
+       'count' => 4,  // 根据 CPU 核心数调整
+   ],
+   ```
 
 ## 📋 常见问题
 
@@ -351,7 +442,7 @@ return [
 'discover' => [
     'cache' => [
         'enable' => true,  // 启用缓存
-        'ttl' => 3600,    // 缓存时间
+        'ttl' => 3600,    // 缓存时间（秒）
     ],
 ],
 ```
@@ -365,7 +456,7 @@ return [
 $result = mcp_server_handle_message($message, $sessionId);
 
 // 方式 2: 使用 Server 类
-$server = new \X2nx\WebmanMcp\Process\Server();
+$server = Server::instance();
 $result = $server->handleMessage($message, $sessionId);
 ```
 
@@ -376,10 +467,31 @@ $result = $server->handleMessage($message, $sessionId);
 ```php
 [
     [
-        'session_id' => 'uuid-string',
-        'mcp_message' => '{"jsonrpc":"2.0",...}'
-    ]
+        'session_id' => '550e8400-e29b-41d4-a716-446655440000',
+        'mcp_message' => '{"jsonrpc":"2.0","id":"1","result":{...}}'
+    ],
+    // ... 更多响应消息
 ]
+```
+
+### Q: 如何处理 SSE 会话管理？
+
+**A:** SSE 模式会自动管理会话，您只需要：
+
+1. 通过 GET `/sse` 建立连接，获取 `sessionId`
+2. 使用该 `sessionId` 通过 POST `/message?sessionId=xxx` 发送消息
+3. 服务器会自动维护会话状态
+
+### Q: 如何查看日志？
+
+**A:** 日志文件位于 `runtime/logs/` 目录：
+
+```bash
+# 查看 MCP 日志
+tail -f runtime/logs/plugin.x2nx.webman-mcp.mcp.log
+
+# 查看所有日志
+tail -f runtime/logs/webman.log
 ```
 
 ## 🤝 贡献

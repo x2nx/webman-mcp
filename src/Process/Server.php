@@ -6,6 +6,7 @@ use Workerman\Worker;
 use Workerman\Protocols\Http\Request;
 use Workerman\Connection\TcpConnection;
 use Mcp\Server as McpServer;
+use Mcp\Server\Builder as McpServerBuilder;
 use Mcp\Server\Session\FileSessionStore;
 use Mcp\Server\Transport\StdioTransport;
 use Mcp\Server\Transport\StreamableHttpTransport;
@@ -25,6 +26,14 @@ class Server
      * @var Worker
      */
     protected Worker $worker;
+    /**
+     * @var McpServer
+     */
+    protected McpServer $server;
+    /**
+     * @var McpServerBuilder
+     */
+    protected McpServerBuilder $serverBuilder;
     /**
      * @var LoggerInterface
      */
@@ -61,8 +70,8 @@ class Server
             $this->psr17Factory = new Psr17Factory();
 
             $sessionConfig = $this->getConfig('mcp.server.session', []);
-            $sessionTtl = (int) $sessionConfig['ttl'] ?? 3600;
-            $sessionStoreName = (string) $sessionConfig['store'] ?? '';
+            $sessionTtl = (int) ($sessionConfig['ttl'] ?? 3600);
+            $sessionStoreName = (string) ($sessionConfig['store'] ?? '');
             try {
                 $this->globalSessionStore = WebmanCache::forSessions($sessionStoreName, $sessionTtl);
                 $this->logger->info('Using Webman CacheSessionStore for MCP sessions', [
@@ -81,7 +90,7 @@ class Server
                 'worker_id' => $worker->id,
                 'session_store' => get_class($this->globalSessionStore)
             ]);
-            
+            $this->server = $this->createMcpServer();
         } catch (\Throwable $e) {
             $this->logger->error('Failed to start MCP Process Worker', [
                 'error' => $e->getMessage(),
@@ -124,7 +133,11 @@ class Server
     }
 
     /**
-     * 消息处理
+     * Handle incoming message
+     * 
+     * @param TcpConnection $connection
+     * @param Request $request
+     * @return void
      */
     public function onMessage(TcpConnection $connection, Request $request): void
     {
@@ -155,7 +168,7 @@ class Server
     }
 
     /**
-     * error handling
+     * Handle connection error
      * 
      * @param TcpConnection $connection
      * @param int $code
@@ -176,17 +189,23 @@ class Server
     }
 
     /**
-     * connection closed
+     * Handle connection closed
      * 
      * @param TcpConnection $connection
      * @return void
      */
     public function onClose(TcpConnection $connection): void
     {
-        // clear sse connection info
+        // Clear SSE connection info
         foreach (self::$mcpSseConnects as $sessionId => $connectionInfo) {
-            if ($connectionInfo['connection_id'] === $connection->id && $connectionInfo['worker_id'] === $this->worker->id) {
+            if (isset($connectionInfo['connection_id'], $connectionInfo['worker_id']) 
+                && $connectionInfo['connection_id'] === $connection->id 
+                && $connectionInfo['worker_id'] === $this->worker->id) {
                 unset(self::$mcpSseConnects[$sessionId]);
+                $this->logger->debug('SSE connection closed', [
+                    'session_id' => $sessionId,
+                    'connection_id' => $connection->id
+                ]);
                 break;
             }
         }
@@ -202,29 +221,25 @@ class Server
         if (empty($message)) {
             return false;
         }
-        // 初始化必要的组件
-        $this->logger = Log::channel(sprintf(self::CONFIG_PREFIX, 'mcp'));
-        $this->globalSessionStore = new FileSessionStore(runtime_path('sessions'));
-        $server = $this->createMcpServer();
+        $this->ensureInitialized();
         $transport = new MessageTransport(
             message: $message,
             sessionId: $sessionId,
             logger: $this->logger
         );
-        return $server->run($transport);
+        return $this->server->run($transport);
     }
 
     /**
-     * handle sse message
+     * Handle SSE (Server-Sent Events) message
+     * 
      * @param TcpConnection $connection
      * @param Request $request
-     * @return mixed
+     * @return array|null Response array or null on error
      */
-    private function handleSseMessage(TcpConnection $connection, Request $request): mixed
+    private function handleSseMessage(TcpConnection $connection, Request $request): ?array
     {
         try {
-            $server = $this->createMcpServer();
-            
             $transport = new SseHttpTransport(
                 connection: $connection,
                 request: $this->createPsrRequest($request),
@@ -232,8 +247,7 @@ class Server
                 logger: $this->logger
             );
             
-            return $server->run($transport);
-            
+            return $this->server->run($transport);
         } catch (\Throwable $e) {
             $this->logger->error('SSE request handling error', [
                 'connection_id' => $connection->id,
@@ -250,23 +264,22 @@ class Server
     }
 
     /**
-     * handle mcp endpoint
+     * Handle MCP stream endpoint message
+     * 
      * @param TcpConnection $connection
      * @param Request $request
-     * @return array
+     * @return array Response array with status, headers, and body
      */
     private function handleMcpMessage(TcpConnection $connection, Request $request): array
     {
         try {
-            $server = $this->createMcpServer();
-
             $transport = new StreamableHttpTransport(
                 request: $this->createPsrRequest($request),
                 responseFactory: $this->psr17Factory,
                 streamFactory: $this->psr17Factory,
                 logger: $this->logger
             );
-            $response = $server->run($transport);
+            $response = $this->server->run($transport);
             return [
                 'status' => $response->getStatusCode(),
                 'headers' => $response->getHeaders(),
@@ -283,11 +296,12 @@ class Server
     }
 
     /**
-     * handle error
-     * @param string|null $path
-     * @param int $status
-     * @param string $message
-     * @return array
+     * Handle error and generate error response
+     * 
+     * @param string|null $path Request path (for logging)
+     * @param int $status HTTP status code
+     * @param string $message Error message
+     * @return array Response array with status, headers, and body
      */
     private function handleError(?string $path = null, int $status = 404, string $message = 'The service is currently unavailable'): array
     {
@@ -305,10 +319,10 @@ class Server
     }
  
     /**
-     * create psr request from workerman request
+     * Create PSR-7 request from Workerman request
      * 
-     * @param Request|null $workermanRequest
-     * @return ServerRequestInterface
+     * @param Request|null $workermanRequest Workerman request object
+     * @return ServerRequestInterface PSR-7 server request
      */
     private function createPsrRequest(?Request $workermanRequest = null): ServerRequestInterface
     {
@@ -339,9 +353,10 @@ class Server
     }
 
     /**
-     * create mcp server instance
+     * Create and configure MCP server instance
      * 
-     * @return McpServer
+     * @return McpServer Configured MCP server instance
+     * @throws \Throwable If server creation fails
      */
     private function createMcpServer(): McpServer
     {
@@ -401,7 +416,69 @@ class Server
             throw $e;
         }
         
-        return $builder->build();
+        $this->serverBuilder = $builder;
+        $this->server = $this->serverBuilder->build();
+
+        return $this->server;
+    }
+
+    /**
+     * Get the MCP server builder instance
+     * 
+     * @return McpServerBuilder
+     * @throws \RuntimeException If server builder is not initialized
+     */
+    public function getServerBuilder(): McpServerBuilder
+    {
+        if (!isset($this->serverBuilder)) {
+            $this->ensureInitialized();
+        }
+        return $this->serverBuilder;
+    }
+
+    /**
+     * Set or create the MCP server builder
+     * 
+     * @param McpServerBuilder|null $serverBuilder Optional builder instance
+     * @return self
+     */
+    public function setServerBuilder(?McpServerBuilder $serverBuilder = null): self
+    {
+        if ($serverBuilder !== null) {
+            $this->serverBuilder = $serverBuilder;
+            $this->server = $serverBuilder->build();
+        } else {
+            $this->ensureInitialized();
+        }
+        return $this;
+    }
+
+    /**
+     * Get the MCP server instance
+     * 
+     * @return McpServer
+     * @throws \RuntimeException If server is not initialized
+     */
+    public function getServer(): McpServer
+    {
+        if (!isset($this->server)) {
+            $this->ensureInitialized();
+        }
+        return $this->server;
+    }
+
+    public static function instance(): self {
+        return new self();
+    }
+
+    public function setServer(?McpServer $server = null): self
+    {
+        if ($server !== null) {
+            $this->server = $server;
+        } else {
+            $this->ensureInitialized();
+        }
+        return $this;
     }
 
     /**
@@ -409,13 +486,10 @@ class Server
      */
     public function stdioServer(): void
     {
-        // 初始化必要的组件
-        $this->logger = Log::channel(sprintf(self::CONFIG_PREFIX, 'mcp'));
-        $this->globalSessionStore = new FileSessionStore(runtime_path('sessions'));
-        $server = $this->createMcpServer();
+        $this->ensureInitialized();
         $transport = new StdioTransport(logger: $this->logger);
         $this->logger->info('MCP Server started in stdio mode');
-        $server->run($transport);
+        $this->server->run($transport);
     }
 
     /**
@@ -429,14 +503,15 @@ class Server
     }
 
     /**
-     * start channel client
-     * this is used to send messages to the client
-     * @param Worker $worker
+     * Start channel client for inter-process communication
+     * This is used to send messages between workers and handle SSE connections
+     * 
+     * @param Worker $worker Worker instance
      * @return void
      */
     private function startChannelClient(Worker $worker): void
     {
-        Client::connect('127.0.0.1', 2206);
+        Client::connect($this->getConfig('app.channel.host'), $this->getConfig('app.channel.port'));
         Client::on('mcp_sse_connects', function ($message){
             if (!isset(self::$mcpSseConnects[$message['session_id']])) {
                 self::$mcpSseConnects[$message['session_id']] = $message;
@@ -468,5 +543,43 @@ class Server
             $response['headers'] ?? [],
             $response['body'] ?? ''
         ));
+    }
+
+    /**
+     * Ensure logger and session store are initialized
+     * @return void
+     */
+    private function ensureInitialized(): void
+    {
+        if (!isset($this->logger)) {
+            $this->logger = Log::channel(sprintf(self::CONFIG_PREFIX, 'mcp'));
+        }
+        
+        if (!isset($this->globalSessionStore)) {
+            $sessionConfig = $this->getConfig('mcp.server.session', []);
+            $sessionTtl = (int) ($sessionConfig['ttl'] ?? 3600);
+            $sessionStoreName = (string) ($sessionConfig['store'] ?? '');
+            
+            try {
+                $this->globalSessionStore = WebmanCache::forSessions($sessionStoreName, $sessionTtl);
+                $this->logger->info('Using Webman CacheSessionStore for MCP sessions', [
+                    'store' => $sessionStoreName ?: '(default)',
+                    'ttl' => $sessionTtl
+                ]);
+            } catch (\Throwable $e) {
+                $this->logger->warning('Failed to init CacheSessionStore, fallback to FileSessionStore', [
+                    'error' => $e->getMessage()
+                ]);
+                $this->globalSessionStore = new FileSessionStore(runtime_path('sessions'));
+            }
+        }
+        
+        if (!isset($this->psr17Factory)) {
+            $this->psr17Factory = new Psr17Factory();
+        }
+
+        if (!isset($this->server)) {
+            $this->createMcpServer();
+        }
     }
 }
