@@ -92,10 +92,12 @@ class Server
             ]);
             $this->server = $this->createMcpServer();
         } catch (\Throwable $e) {
-            $this->logger->error('Failed to start MCP Process Worker', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
+            if (isset($this->logger)) {
+                $this->logger->error('Failed to start MCP Process Worker', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+            }
             throw $e;
         }
     }
@@ -107,7 +109,9 @@ class Server
      */
     public function onWorkerReload(): void
     {
-        $this->logger->info('MCP Process Worker reloaded');
+        if (isset($this->logger)) {
+            $this->logger->info('MCP Process Worker reloaded');
+        }
     }
 
     /**
@@ -117,7 +121,9 @@ class Server
      */
     public function onWorkerStop(): void
     {
-        $this->logger->info('MCP Process Worker stopped');
+        if (isset($this->logger)) {
+            $this->logger->info('MCP Process Worker stopped');
+        }
         self::$mcpSseConnects = [];
     }
 
@@ -158,11 +164,13 @@ class Server
                 $this->sendResponse($connection, $response);
             }
         } catch (\Throwable $e) {
-            $this->logger->error('Request handling error', [
-                'path' => $path,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
+            if (isset($this->logger)) {
+                $this->logger->error('Request handling error', [
+                    'path' => $path,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+            }
             $this->handleError($path);
         }
     }
@@ -177,11 +185,13 @@ class Server
      */
     public function onError(TcpConnection $connection, int $code, string $message): void
     {
-        $this->logger->error('Connection error', [
-            'connection_id' => $connection->id,
-            'code' => $code,
-            'message' => $message
-        ]);
+        if (isset($this->logger)) {
+            $this->logger->error('Connection error', [
+                'connection_id' => $connection->id,
+                'code' => $code,
+                'message' => $message
+            ]);
+        }
         $this->sendResponse(
             $connection, 
             $this->handleError(null, $code, $message)
@@ -197,15 +207,20 @@ class Server
     public function onClose(TcpConnection $connection): void
     {
         // Clear SSE connection info
+        if (!isset($this->worker)) {
+            return;
+        }
         foreach (self::$mcpSseConnects as $sessionId => $connectionInfo) {
             if (isset($connectionInfo['connection_id'], $connectionInfo['worker_id']) 
                 && $connectionInfo['connection_id'] === $connection->id 
                 && $connectionInfo['worker_id'] === $this->worker->id) {
                 unset(self::$mcpSseConnects[$sessionId]);
-                $this->logger->debug('SSE connection closed', [
-                    'session_id' => $sessionId,
-                    'connection_id' => $connection->id
-                ]);
+                if (isset($this->logger)) {
+                    $this->logger->debug('SSE connection closed', [
+                        'session_id' => $sessionId,
+                        'connection_id' => $connection->id
+                    ]);
+                }
                 break;
             }
         }
